@@ -1,0 +1,6 @@
+#!/bin/bash
+
+sed -n "/^`LC_ALL=en_US.UTF-8 date +'%b %_d'`.*office-automation: Work day started/p" /var/log/syslog \
+	| head -1 \
+	| grep -Eo '^\w{3} {1,2}[0-9]{1,2} [0-9]{2}:[0-9]{2}:[0-9]{2}' \
+	| xargs -0 -I login_time date -d "login_time $((8+1)) hours" +'%H:%M:%S'
