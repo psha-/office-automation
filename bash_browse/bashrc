@@ -1,0 +1,113 @@
+# When sourced from .bashrc it provides these commands:
+# lll - locate and edit a file
+# LLL - case sensitive lll
+# ggg - grep and edit a file
+# GGG - case sensitive ggg
+# bbb - locate and blame a file
+# BBB - case sensitive bbb
+
+
+
+# Filter files in the current folder using a command and list them or edit a file in case of single result
+# $1 A string to use when filtering the files for list
+# $2 A string to use when filtering the files for edit. Can contain @linenum token to be replaced with a line number from the list
+# $3 Line number from the results to pick a single file to edit
+# $4 The actual command to use as action on the filtered file
+filter_file_action() {
+	FILTER_TO_LIST=$1
+	FILTER_TO_EDIT=$2
+	LINENUM=$3
+	EDIT_COMMAND=$4
+	NUMLINES=0
+
+	if [ "$LINENUM" = "" ]; then
+		RES=`eval "$FILTER_TO_LIST"`
+		# No need for -n. For some reason there is no trailing \n
+		NUMLINES=$(echo "$RES" | wc -l)
+	fi
+
+	if [ "$LINENUM" = "" ] && [ "$NUMLINES" != "1" ]; then
+		if [ "$RES" != "" ]; then
+			echo "$RES"
+		fi
+	else
+		if [ "$NUMLINES" = "1" ]; then
+			LINENUM=1
+		fi
+		RES=`eval ${FILTER_TO_EDIT/"@linenum"/"$LINENUM"}`
+		if [ "$RES" != "" ]; then
+			$EDIT_COMMAND $RES
+		fi
+	fi
+}
+
+# Locate in current folder with line numbers or specify a line by its number
+# $1 Part of a filename to locate
+# $2 Line number from the results to edit
+# $3 When != "", it matches the case
+lll() {
+	STRING=$1
+	LINENUM=$2
+	CASE_SENSITIVE=$3
+	CS=`[[ "$CASE_SENSITIVE" == "" ]] && echo "-i" || echo ""`
+
+	filter_file_action \
+		'locate '$CS' --regexp ^$(pwd)/.*"$STRING" | grep -v \.swp$ | grep -v /\.cache/ | cat -n | perl -pe '"'"'$_ = "\e[94m$_\e[0m" if(!($. % 2))'"'" \
+		"locate $CS --regexp ^$(pwd)/.*\"$STRING\" | grep -v \.swp$ | grep -v /\.cache/ | sed -n \"@linenum p\"" \
+		"$LINENUM" \
+		"vim"
+}
+
+# Case sensitive lll
+LLL() {
+	lll "$1" "$2" "true"
+}
+
+# Git grep in current folder with line numbers or specify a line by its number
+# $1 Part of a filename to grep
+# $2 Line number from the results to edit
+# $3 When != "", it matches the case
+ggg() {
+	STRING=$1
+	LINENUM=$2
+	CASE_SENSITIVE=$3
+	CS=`[[ "$CASE_SENSITIVE" == "" ]] && echo "-i" || echo ""`
+
+	# Use cut to take the file before the first ":"
+	filter_file_action \
+		"git grep $CS --color=always \"$STRING\" | cat -n" \
+		"git grep $CS \"$STRING\" | sed -n \"@linenum p\" | cut -f1 -d:" \
+		"$LINENUM" \
+		"vim"
+}
+
+# Case sensitive ggg
+GGG() {
+	ggg "$1" "$2" "true"
+}
+
+# Git blame in current folder with line numbers or specify a line by its number
+# $1 Part of a filename to locate
+# $2 Line number from the results to blame
+# $3 When != "", it matches the blame
+bbb() {
+	STRING=$1
+	LINENUM=$2
+	BEFORE=$3
+	CASE_SENSITIVE=$3
+
+	BEFORE_COMMIT=`[[ "$BEFORE" == "" ]] && echo "" || echo "$BEFORE^"`
+	CS=`[[ "$CASE_SENSITIVE" == "" ]] && echo "-i" || echo ""`
+
+	filter_file_action \
+		'locate '$CS' --regexp ^$(pwd)/.*"$STRING" | grep -v \.swp$ | grep -v /\.cache/ | cat -n | perl -pe '"'"'$_ = "\e[94m$_\e[0m" if(!($. % 2))'"'" \
+		"locate $CS --regexp ^$(pwd)/.*\"$STRING\" | grep -v \.swp$ | grep -v /\.cache/ | sed -n \"@linenum p\"" \
+		"$LINENUM" \
+		"git blame -w $BEFORE_COMMIT"
+}
+
+#Case sensitive bbb
+BBB() {
+	bbb "$1" "$2" "$3" "true"
+}
+
