@@ -6,6 +6,7 @@ Terminal environment (WezTerm + shell aliases) shared across Linux, macOS and Wi
 
     home/            mirrors ~  (home/.wezterm.lua -> ~/.wezterm.lua, etc.)
     install.py       applies the repo to this machine; stdlib only, Python 3.6+
+    requirements.txt Python packages for the tooling, installed into .venv/
 
 ## Fresh machine
 
@@ -24,7 +25,19 @@ replaces as `<name>.bak-<timestamp>`, and patches `.bashrc`, `.zshrc` and the
 bash login profile so the aliases load everywhere. Re-running is safe.
 
 Flags: `--dry-run` shows the plan without touching anything, `--copy` copies
-instead of linking.
+instead of linking, `--no-venv` skips the virtual environment.
+
+## Python environment
+
+On first run `install.py` creates a virtual environment in `.venv/` (ignored
+by git), installs `requirements.txt` into it and re-executes itself there.
+Any Python dependency the tooling ever needs goes into `requirements.txt`,
+never into the system interpreter. The installer itself is standard library
+only, so the venv starts empty.
+
+On Debian/Ubuntu a fresh machine may lack `ensurepip`; the installer then
+creates the venv without pip and prints a hint (`sudo apt install python3-venv`).
+Everything works without pip as long as `requirements.txt` lists no packages.
 
 ## Adding a file
 

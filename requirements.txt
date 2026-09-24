@@ -1,0 +1,2 @@
+# Python packages the dotfiles tooling needs, installed into .venv by install.py.
+# Standard pip syntax, one package per line, e.g.:  rich>=13

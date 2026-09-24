@@ -2,6 +2,9 @@
 """Install the dotfiles in this repository into the current user's home directory.
 
 Portable by design: standard library only, Python 3.6+, Linux/macOS/Windows.
+On first run it creates a virtual environment in ``.venv`` next to this file,
+installs ``requirements.txt`` into it and re-executes itself there, so any
+Python dependency the dotfiles ever need stays out of the system interpreter.
 Every file under ``home/`` is mirrored to the same relative path under ``~``,
 symlinked where the OS allows it and copied otherwise. Existing files are
 backed up before being replaced. Shell rc files are patched so that bash and
@@ -12,6 +15,7 @@ Usage:
     python3 install.py            # install (symlink, fall back to copy)
     python3 install.py --copy     # always copy instead of symlinking
     python3 install.py --dry-run  # print what would happen, change nothing
+    python3 install.py --no-venv  # run with the current interpreter
 """
 
 import sys
@@ -22,6 +26,7 @@ if sys.version_info < (3, 6):
 import argparse
 import os
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -29,6 +34,16 @@ REPO_DIR = Path(__file__).resolve().parent
 SOURCE_ROOT = REPO_DIR / "home"
 HOME = Path.home()
 IS_MACOS = sys.platform == "darwin"
+IS_WINDOWS = os.name == "nt"
+
+VENV_DIR = REPO_DIR / ".venv"
+VENV_PYTHON = VENV_DIR / ("Scripts/python.exe" if IS_WINDOWS else "bin/python")
+REQUIREMENTS = REPO_DIR / "requirements.txt"
+## Set on the re-executed process so the bootstrap can never loop.
+VENV_GUARD = "DOTFILES_INSTALL_IN_VENV"
+
+## Editor and OS litter that must never be mirrored into the home directory.
+IGNORED_PATTERNS = ("*.swp", "*.swo", "*~", ".DS_Store", "Thumbs.db", "*.bak-*")
 
 ## Markers wrapping every block this script appends to an rc file.
 BLOCK_START = "# >>> dotfiles: {name} >>>"
@@ -68,6 +83,9 @@ class Installer:
         if not SOURCE_ROOT.is_dir():
             sys.exit("missing directory: {}".format(SOURCE_ROOT))
         for src in sorted(p for p in SOURCE_ROOT.rglob("*") if p.is_file()):
+            if any(src.match(pattern) for pattern in IGNORED_PATTERNS):
+                self.log("skip", "{} (editor/OS temp file)".format(src))
+                continue
             self.install_file(src, HOME / src.relative_to(SOURCE_ROOT))
 
     def install_file(self, src, dst):
@@ -176,16 +194,87 @@ class Installer:
             return ""
 
 
+# -- virtual environment bootstrap ---------------------------------------------
+
+
+def in_repo_venv():
+    """True when the running interpreter is the one inside VENV_DIR."""
+    if os.environ.get(VENV_GUARD):
+        return True
+    try:
+        return Path(sys.prefix).resolve() == VENV_DIR.resolve()
+    except OSError:
+        return False
+
+
+def create_venv():
+    """Creates VENV_DIR, falling back to a pip-less venv where ensurepip is missing.
+
+    Debian/Ubuntu ship ensurepip in a separate python3-venv package; without it
+    the venv itself still works, only pip is absent.
+    """
+    import venv
+
+    print("creating virtual environment: {}".format(VENV_DIR), flush=True)
+    try:
+        venv.create(str(VENV_DIR), with_pip=True, clear=True)
+    except Exception as exc:
+        print("  pip could not be bootstrapped ({}); creating the venv without pip".format(exc))
+        print("  hint: on Debian/Ubuntu run: sudo apt install python3-venv")
+        shutil.rmtree(str(VENV_DIR), ignore_errors=True)
+        venv.create(str(VENV_DIR), with_pip=False, clear=True)
+
+
+def requirements_listed():
+    """True when requirements.txt names at least one package."""
+    if not REQUIREMENTS.is_file():
+        return False
+    for line in REQUIREMENTS.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            return True
+    return False
+
+
+def install_requirements():
+    """Installs requirements.txt into the venv; a no-op when everything is already present."""
+    print("installing requirements: {}".format(REQUIREMENTS), flush=True)
+    cmd = [str(VENV_PYTHON), "-m", "pip", "install", "--quiet", "--requirement", str(REQUIREMENTS)]
+    if subprocess.call(cmd) != 0:
+        sys.exit("pip install failed; the venv may lack pip (see python3-venv hint above)")
+
+
+def ensure_venv():
+    """Creates .venv on first run and re-executes this script inside it."""
+    if in_repo_venv():
+        return
+    if not VENV_PYTHON.exists():
+        create_venv()
+    if requirements_listed():
+        install_requirements()
+    env = dict(os.environ)
+    env[VENV_GUARD] = "1"
+    cmd = [str(VENV_PYTHON), str(Path(__file__).resolve())] + sys.argv[1:]
+    sys.stdout.flush()
+    sys.exit(subprocess.call(cmd, env=env))
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--copy", action="store_true", help="copy files instead of symlinking them")
     parser.add_argument("--dry-run", action="store_true", help="show what would be done without changing anything")
+    parser.add_argument("--no-venv", action="store_true", help="skip the .venv bootstrap and run with the current interpreter")
     args = parser.parse_args()
 
+    if args.dry_run and not VENV_PYTHON.exists() and not args.no_venv:
+        print("[dry-run] would create virtual environment: {}".format(VENV_DIR))
+    elif not args.no_venv and not args.dry_run:
+        ensure_venv()
+
     installer = Installer(copy=args.copy, dry_run=args.dry_run)
-    print("repo: {}\nhome: {}\n".format(REPO_DIR, HOME))
+    print("repo:   {}\nhome:   {}\npython: {}\n".format(REPO_DIR, HOME, sys.executable))
     installer.install_all()
     installer.configure_shells()
     print("\ndone. Open a new terminal (or run: source ~/.bashrc) to pick up the changes.")
