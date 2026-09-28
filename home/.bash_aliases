@@ -4,6 +4,7 @@
 alias ll='ls -alF'
 alias la='ls -A'
 alias l='ls -CF'
+alias clo='claude --dangerously-skip-permissions'
 
 # Desktop notification for long running commands, e.g.:  sleep 10; alert
 # Defined only where notify-send exists (Linux desktops).

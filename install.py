@@ -1,45 +1,60 @@
 #!/usr/bin/env python3
 """Install these dotfiles into the home directory on Linux, macOS or Windows.
 
-Runs inside ./.venv (created on first run), links every file under home/ into ~
+Links every file under home/ into ~
 and makes bash and zsh load ~/.bash_aliases. Safe to re-run.
 """
+import itertools
 import os
 import shutil
-import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
 HOME = Path.home()
-VENV = REPO / ".venv"
-VENV_PYTHON = VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 SOURCE_ALIASES = "[ -f ~/.bash_aliases ] && . ~/.bash_aliases"
 SOURCE_BASHRC = '[ -n "$BASH_VERSION" ] && [ -f ~/.bashrc ] && . ~/.bashrc'
 
 
-def run_in_venv():
-    """Create .venv on first run, then re-execute this script with its interpreter."""
-    if Path(sys.prefix).resolve() == VENV.resolve():
-        return
-    if not VENV_PYTHON.exists():
-        print("creating", VENV, flush=True)
-        subprocess.check_call([sys.executable, "-m", "venv", str(VENV)])
-        subprocess.check_call([str(VENV_PYTHON), "-m", "pip", "install", "-q", "-r", str(REPO / "requirements.txt")])
-    sys.exit(subprocess.call([str(VENV_PYTHON), str(REPO / "install.py")] + sys.argv[1:]))
+def can_symlink():
+    """Whether this user may create symlinks. Windows refuses unless Developer Mode is on."""
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / "target"
+        target.touch()
+        try:
+            os.symlink(target, Path(tmp) / "link")
+        except OSError:
+            return False
+    return True
 
 
-def install(src, dst):
-    """Symlink dst -> src, or copy where symlinks are refused (Windows). Keeps a .bak of what was there."""
-    if (dst.is_symlink() and dst.resolve() == src) or (dst.is_file() and dst.read_bytes() == src.read_bytes()):
+def backup_name(path):
+    """First free name among path.bak, path.bak1, path.bak2, ..."""
+    for i in itertools.count():
+        candidate = path.with_name(f"{path.name}.bak{i or ''}")
+        if not candidate.exists() and not candidate.is_symlink():
+            return candidate
+
+
+def install(dst, src, link):
+    """Symlink dst -> src, or copy when link is False. Keeps a .bak of what was there."""
+    if dst.is_symlink():
+        if dst.resolve() == src:
+            return
+    elif not link and dst.is_file() and dst.read_bytes() == src.read_bytes():
         return
+
     if dst.is_symlink() or dst.exists():
-        dst.replace(dst.with_name(dst.name + ".bak"))
+        bak = backup_name(dst)
+        dst.replace(bak)
+        print("backed up", dst, "as", bak.name)
+
     dst.parent.mkdir(parents=True, exist_ok=True)
-    try:
+    if link:
         os.symlink(src, dst)
-    except OSError:
+    else:
         shutil.copy2(src, dst)
     print("installed", dst)
 
@@ -54,11 +69,13 @@ def ensure_line(rc, line, mentions):
 
 
 def main():
-    run_in_venv()
+    link = can_symlink()
+    if not link:
+        print("symlinks refused, copying instead")
 
     for src in sorted(p for p in (REPO / "home").rglob("*") if p.is_file()):
         if not src.name.endswith((".swp", ".swo", "~")):
-            install(src, HOME / src.relative_to(REPO / "home"))
+            install(HOME / src.relative_to(REPO / "home"), src, link)
 
     ensure_line(HOME / ".bashrc", SOURCE_ALIASES, ".bash_aliases")
     if sys.platform == "darwin" or shutil.which("zsh"):
