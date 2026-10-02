@@ -39,14 +39,17 @@ def backup_name(path):
 
 
 def install(dst, src, link):
-    """Symlink dst -> src, or copy when link is False. Keeps a .bak of what was there."""
+    """Symlink dst -> src, or copy when link is False. Backs up what was there; broken links are just dropped."""
     if dst.is_symlink():
         if dst.resolve() == src:
             return
     elif not link and dst.is_file() and dst.read_bytes() == src.read_bytes():
         return
 
-    if dst.is_symlink() or dst.exists():
+    if dst.is_symlink() and not dst.exists():
+        dst.unlink()
+        print("removed broken link", dst)
+    elif dst.is_symlink() or dst.exists():
         bak = backup_name(dst)
         dst.replace(bak)
         print("backed up", dst, "as", bak.name)
